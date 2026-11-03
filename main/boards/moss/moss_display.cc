@@ -2,6 +2,8 @@
 
 #include "application.h"
 #include "assets/boot_animation.h"
+#include "assets/console_font.h"
+#include "board.h"
 #include "lvgl_font.h"
 #include "lvgl_theme.h"
 
@@ -27,7 +29,7 @@ MossDisplay::MossDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_handl
     width_ = width;
     height_ = height;
 
-    auto text_font = std::make_shared<LvglBuiltInFont>(&BUILTIN_TEXT_FONT);
+    auto text_font = std::make_shared<LvglBuiltInFont>(&moss_assets::kConsoleFont);
     auto icon_font = std::make_shared<LvglBuiltInFont>(&BUILTIN_ICON_FONT);
     auto large_icon_font = std::make_shared<LvglBuiltInFont>(&font_material_symbols_30_1);
     auto emoji_font = std::make_shared<LvglBuiltInFont>(&font_noto_emoji_30_1);
@@ -99,6 +101,8 @@ MossDisplay::~MossDisplay() {
             if (root_ != nullptr) {
                 lv_obj_delete(root_);
                 root_ = nullptr;
+                // 状态栏由 root_ 一并释放，避免基类析构时重复删除。
+                network_label_ = nullptr;
             }
         }
     }
@@ -200,25 +204,39 @@ void MossDisplay::ShowConsole() {
     lv_obj_delete(boot_image_);
     boot_image_ = nullptr;
     showing_boot_ = false;
-    const int line_height = lv_font_get_line_height(current_theme_->GetTextFont()->font());
-    const int footer_height = std::min(line_height, height_ / 2);
+    // 128×64：顶部 16px 固定状态栏，下方 48px 容纳 4 行 12px 日志。
+    const int header_height = std::min(kHeaderHeight, height_ / 2);
+    auto icon_font = static_cast<LvglTheme*>(current_theme_)->icon_font()->font();
+    network_label_ = lv_label_create(root_);
+    lv_obj_set_size(network_label_, 14, 14);
+    lv_obj_set_pos(network_label_, 0, -2);
+    lv_obj_set_style_text_font(network_label_, icon_font, 0);
+    lv_label_set_long_mode(network_label_, LV_LABEL_LONG_CLIP);
+    activity_label_ = lv_label_create(root_);
+    lv_obj_set_pos(activity_label_, 17, 0);
+    lv_obj_set_size(activity_label_, width_ - 17, kLogLineHeight);
+    lv_label_set_long_mode(activity_label_, LV_LABEL_LONG_CLIP);
+    auto divider = lv_obj_create(root_);
+    lv_obj_remove_style_all(divider);
+    lv_obj_set_size(divider, width_, 1);
+    lv_obj_set_pos(divider, 0, header_height - 3);
+    lv_obj_set_style_bg_color(divider, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(divider, LV_OPA_COVER, 0);
     log_view_ = lv_obj_create(root_);
     lv_obj_remove_style_all(log_view_);
-    lv_obj_set_size(log_view_, width_, height_ - footer_height);
+    lv_obj_set_pos(log_view_, 0, header_height);
+    lv_obj_set_size(log_view_, width_, height_ - header_height);
     lv_obj_set_scroll_dir(log_view_, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(log_view_, LV_SCROLLBAR_MODE_OFF);
     lv_obj_remove_flag(log_view_, LV_OBJ_FLAG_SCROLL_ELASTIC);
     log_label_ = lv_label_create(log_view_);
     lv_obj_set_width(log_label_, width_);
     lv_label_set_long_mode(log_label_, LV_LABEL_LONG_WRAP);
-    activity_label_ = lv_label_create(root_);
-    lv_obj_set_size(activity_label_, width_, footer_height);
-    lv_obj_align(activity_label_, LV_ALIGN_BOTTOM_LEFT, 0, 0);
-    lv_label_set_long_mode(activity_label_, LV_LABEL_LONG_CLIP);
     if (entries_.empty()) {
         AppendLog("system", "MOSS READY");
     }
     RefreshLog();
+    RefreshNetworkIcon();
     RefreshActivity();
     ESP_LOGI(TAG, "Boot animation finished, console shown");
 }
@@ -305,7 +323,7 @@ void MossDisplay::RefreshActivity() {
     const uint32_t elapsed = lv_tick_elaps(activity_started_);
     char buffer[48];
     // 仅显示真实设备状态和等待计时，不生成虚构的推理日志。
-    std::snprintf(buffer, sizeof(buffer), "> %s %lu.%lus %c", activity,
+    std::snprintf(buffer, sizeof(buffer), "%s %lu.%lus %c", activity,
                   static_cast<unsigned long>(elapsed / 1000),
                   static_cast<unsigned long>((elapsed / 100) % 10),
                   (lv_tick_get() / 500) % 2 == 0 ? '_' : ' ');
@@ -390,9 +408,68 @@ bool MossDisplay::SetEmotion(const char* emotion) {
     return false;
 }
 
+bool MossDisplay::AddTextGlyphs(const std::vector<TextGlyph>& glyphs, uint8_t bpp) {
+    if (glyphs.empty()) {
+        return LvglDisplay::AddTextGlyphs(glyphs, bpp);
+    }
+    if (bpp != 1 && bpp != 4) {
+        return false;
+    }
+    // 上游发送的是原 16px 行高字形；缩放补充中文字，避免撑高日志行。
+    auto scale = [](int value) {
+        return value >= 0 ? (value * 3 + 2) / 4 : -((-value * 3 + 2) / 4);
+    };
+    std::vector<TextGlyph> compact;
+    compact.reserve(glyphs.size());
+    for (const auto& glyph : glyphs) {
+        const size_t expected = (static_cast<size_t>(glyph.box_w) * glyph.box_h * bpp + 7) / 8;
+        if (glyph.bitmap.size() != expected) {
+            continue;
+        }
+        TextGlyph result;
+        result.codepoint = glyph.codepoint;
+        result.adv_w = scale(glyph.adv_w);
+        result.box_w = glyph.box_w == 0 ? 0 : std::max(1, scale(glyph.box_w));
+        result.box_h = glyph.box_h == 0 ? 0 : std::clamp(scale(glyph.box_h), 1, kLogLineHeight);
+        result.ofs_x = scale(glyph.ofs_x);
+        result.ofs_y = std::clamp(scale(glyph.ofs_y), -2, 10 - result.box_h);
+        result.bitmap.resize((static_cast<size_t>(result.box_w) * result.box_h * bpp + 7) / 8, 0);
+        for (int y = 0; y < result.box_h; ++y) {
+            for (int x = 0; x < result.box_w; ++x) {
+                const size_t source_pixel =
+                    static_cast<size_t>(y * glyph.box_h / result.box_h) * glyph.box_w +
+                    static_cast<size_t>(x) * glyph.box_w / result.box_w;
+                const size_t target_pixel = static_cast<size_t>(y) * result.box_w + x;
+                if (bpp == 1) {
+                    const auto value =
+                        (glyph.bitmap[source_pixel / 8] >> (7 - source_pixel % 8)) & 1;
+                    result.bitmap[target_pixel / 8] |= value << (7 - target_pixel % 8);
+                } else {
+                    const auto value =
+                        (glyph.bitmap[source_pixel / 2] >> (4 * (1 - source_pixel % 2))) & 15;
+                    result.bitmap[target_pixel / 2] |= value << (4 * (1 - target_pixel % 2));
+                }
+            }
+        }
+        compact.push_back(std::move(result));
+    }
+    return LvglDisplay::AddTextGlyphs(compact, bpp);
+}
+
+void MossDisplay::RefreshNetworkIcon() {
+    if (network_label_ != nullptr) {
+        const char* icon = Board::GetInstance().GetNetworkStateIcon();
+        if (icon != nullptr && icon != network_icon_) {
+            network_icon_ = icon;
+            lv_label_set_text(network_label_, icon);
+        }
+    }
+}
+
 void MossDisplay::UpdateStatusBar(bool update_all) {
     DisplayLockGuard lock(this);
     if (lock) {
+        RefreshNetworkIcon();
         RefreshActivity();
     }
 }
@@ -401,6 +478,11 @@ void MossDisplay::SetTheme(Theme* theme) {
     DisplayLockGuard lock(this);
     if (!lock || theme == nullptr) {
         return;
+    }
+    auto lvgl_theme = static_cast<LvglTheme*>(theme);
+    if (theme->GetTextFont() == nullptr ||
+        theme->GetTextFont()->font()->line_height != kLogLineHeight) {
+        lvgl_theme->set_text_font(std::make_shared<LvglBuiltInFont>(&moss_assets::kConsoleFont));
     }
     Display::SetTheme(theme);
     if (root_ != nullptr && theme->GetTextFont() != nullptr) {

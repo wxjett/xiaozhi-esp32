@@ -24,6 +24,7 @@ public:
     void RemoveChatMessage(const char* role, const char* content) override;
     void ClearChatMessages() override;
     bool SetEmotion(const char* emotion) override;
+    bool AddTextGlyphs(const std::vector<TextGlyph>& glyphs, uint8_t bpp) override;
     void UpdateStatusBar(bool update_all = false) override;
     void SetTheme(Theme* theme) override;
     void SetPowerSaveMode(bool on) override;
@@ -32,6 +33,8 @@ public:
 private:
     // 从首个启动画面提交刷新后计时，不阻塞网络和音频启动。
     static constexpr uint32_t kBootDurationMs = 6000;
+    static constexpr int kHeaderHeight = 16;
+    static constexpr int kLogLineHeight = 12;
     static constexpr size_t kMaxEntries = 16;
     static constexpr size_t kMaxMessageBytes = 512;
     struct LogEntry {
@@ -66,6 +69,7 @@ private:
     void AppendLog(const std::string& role, const std::string& text);
     void RefreshLog();
     void RefreshActivity();
+    void RefreshNetworkIcon();
 
     bool Lock(int timeout_ms = 0) override;
     void Unlock() override;
