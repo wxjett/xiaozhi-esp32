@@ -3,6 +3,7 @@
 #include "codecs/no_audio_codec.h"
 #include "config.h"
 #include "moss_display.h"
+#include "moss_motor.h"
 #include "wifi_board.h"
 
 #include <driver/i2c_master.h>
@@ -23,6 +24,7 @@ private:
     esp_lcd_panel_handle_t panel_ = nullptr;
     Display* display_ = nullptr;
     Button boot_button_;
+    MossMotor motor_;
 
     void InitializeDisplayI2c() {
         i2c_master_bus_config_t bus_config = {
@@ -108,11 +110,28 @@ private:
         });
     }
 
+    void InitializeTools() {
+        MossMotor::Config config{
+            .pins = {{{MOTOR_PITCH_IN1, MOTOR_PITCH_IN2, MOTOR_PITCH_IN3, MOTOR_PITCH_IN4},
+                      {MOTOR_YAW_IN1, MOTOR_YAW_IN2, MOTOR_YAW_IN3, MOTOR_YAW_IN4}}},
+            .half_steps_per_revolution = MOTOR_HALF_STEPS_PER_REVOLUTION,
+            .step_interval_ms = MOTOR_STEP_INTERVAL_MS,
+            .max_relative_angle = MOTOR_MAX_RELATIVE_ANGLE_DEG,
+        };
+        auto result = motor_.Initialize(config);
+        if (!result) {
+            ESP_LOGE(TAG, "Motor tools disabled: %s", result.error().c_str());
+            return;
+        }
+        RegisterMossMotorTools(motor_);
+    }
+
 public:
     MossBoard() : boot_button_(BOOT_BUTTON_GPIO) {
         InitializeDisplayI2c();
         InitializeSsd1306Display();
         InitializeButtons();
+        InitializeTools();
     }
 
     virtual AudioCodec* GetAudioCodec() override {
