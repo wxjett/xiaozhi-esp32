@@ -2,7 +2,7 @@
 #include "button.h"
 #include "codecs/no_audio_codec.h"
 #include "config.h"
-#include "display/oled_display.h"
+#include "moss_display.h"
 #include "wifi_board.h"
 
 #include <driver/i2c_master.h>
@@ -91,7 +91,7 @@ private:
         ESP_LOGI(TAG, "Turning display on");
         ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(panel_, true));
 
-        display_ = new OledDisplay(panel_io_, panel_, DISPLAY_WIDTH, DISPLAY_HEIGHT,
+        display_ = new MossDisplay(panel_io_, panel_, DISPLAY_WIDTH, DISPLAY_HEIGHT,
                                    DISPLAY_MIRROR_X, DISPLAY_MIRROR_Y);
     }
 
