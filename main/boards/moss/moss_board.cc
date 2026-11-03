@@ -3,6 +3,7 @@
 #include "codecs/no_audio_codec.h"
 #include "config.h"
 #include "moss_display.h"
+#include "moss_lights.h"
 #include "moss_motor.h"
 #include "wifi_board.h"
 
@@ -25,6 +26,7 @@ private:
     Display* display_ = nullptr;
     Button boot_button_;
     MossMotor motor_;
+    MossLights lights_;
 
     void InitializeDisplayI2c() {
         i2c_master_bus_config_t bus_config = {
@@ -121,9 +123,21 @@ private:
         auto result = motor_.Initialize(config);
         if (!result) {
             ESP_LOGE(TAG, "Motor tools disabled: %s", result.error().c_str());
-            return;
+        } else {
+            RegisterMossMotorTools(motor_);
         }
-        RegisterMossMotorTools(motor_);
+
+        MossLights::Config light_config{
+            .bar_pins = {LAMP_BAR_PIN_1, LAMP_BAR_PIN_2, LAMP_BAR_PIN_3, LAMP_BAR_PIN_4,
+                         LAMP_BAR_PIN_5},
+            .eye_pin = LAMP_EYE_PIN,
+        };
+        auto light_result = lights_.Initialize(light_config);
+        if (!light_result) {
+            ESP_LOGE(TAG, "Light tools disabled: %s", light_result.error().c_str());
+        } else {
+            RegisterMossLightTools(lights_);
+        }
     }
 
 public:

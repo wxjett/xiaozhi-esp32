@@ -31,6 +31,14 @@
 // 仅限制单次命令大小，不代表机构的机械限位。
 #define MOTOR_MAX_RELATIVE_ANGLE_DEG 90
 
+// 沿用旧 MOSS 的五路普通流水灯和 PWM 眼灯，高电平点亮。
+#define LAMP_BAR_PIN_1 GPIO_NUM_8
+#define LAMP_BAR_PIN_2 GPIO_NUM_3
+#define LAMP_BAR_PIN_3 GPIO_NUM_9
+#define LAMP_BAR_PIN_4 GPIO_NUM_10
+#define LAMP_BAR_PIN_5 GPIO_NUM_11
+#define LAMP_EYE_PIN GPIO_NUM_12
+
 #define DISPLAY_SDA_PIN GPIO_NUM_1
 #define DISPLAY_SCL_PIN GPIO_NUM_2
 #define DISPLAY_WIDTH 128
